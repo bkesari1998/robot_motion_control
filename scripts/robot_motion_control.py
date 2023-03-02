@@ -27,6 +27,10 @@ class RobotMotionControl(object):
 
         super.__init__(self)
 
+        self.velocity_topic = velocity_topic
+        self.linear_dof = linear_dof
+        self.angualr_dof = angular_dof
+
     
     @property
     def velocity_topic(self) -> str:
