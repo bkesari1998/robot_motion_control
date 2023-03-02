@@ -16,13 +16,17 @@ class RobotMotionControl(object):
 
     def __init__(self, velocity_topic: str, 
                        linear_dof: int = 2, 
-                       angular_dof: int = 1) -> None:
+                       angular_dof: int = 1,
+                       rate: float = 3,
+                       queue_size: int = 1) -> None:
         """
         Initializes an instance of RobotMotionControl class.
 
         @param velocity_topic [str]: ROS topic to control robot with Twist messages.
         @param linear_dof [int]: linear degrees of freedom (between 0-3)
         @param angular_dof [int]: angular degrees of freedom (between 0-3)
+        @param rate [float]: Hz to publish velocity messages (greater than 0)
+        @param queue_size [int]: Size of velocity publisher queue (greater than 0)
         """
 
         super.__init__(self)
@@ -30,6 +34,12 @@ class RobotMotionControl(object):
         self.velocity_topic = velocity_topic
         self.linear_dof = linear_dof
         self.angualr_dof = angular_dof
+        self.rate = rate
+        self.queue_size = queue_size
+
+        # Initialize ROS publisher
+        self.velocity_pub = rospy.Publisher(self.velocity_topic, Twist, queue_size=self.queue_size)
+ 
 
     
     @property
@@ -55,7 +65,7 @@ class RobotMotionControl(object):
         if topic not in rostopic.get_topic_list():
             raise NameError(f"Topic '{topic}' was not found.")
         
-        self._velocity_control = topic
+        self._velocity_topic = topic
 
     @property
     def linear_dof(self) -> int:
@@ -107,4 +117,54 @@ class RobotMotionControl(object):
             raise ValueError(f"Parameter 'dof' must be between 0-3 but got {dof}")
         
         self._angular_dof = dof
+
+    @property
+    def rate(self) -> int:
+        """
+        Getter for rate.
+
+        @return [int]: Hz of velocity publisher.
+        """
+
+        return self._rate.hz
+    
+    @rate.setter
+    def rate(self, rate: float) -> None:
+        """
+        Setter for rate.
+
+        @param rate [float]: Hz of velocity publisher (greater than 0)
+
+        @raise ValueError: if rate is less than or equal to 0
+        """
+
+        if rate <= 0:
+            raise ValueError(f"Parameter rate must be positive, but got {rate}")
         
+        self._rate = rospy.Rate(rate)
+
+        
+    @property
+    def queue_size(self) -> int:
+        """
+        Getter for queue_size.
+
+        @return [int]: velocity publisher queue size.
+        """
+
+        return self._queue_size
+
+    @queue_size.setter
+    def queue_size(self, size: int) -> None:
+        """
+        Setter for queue_size.
+
+        @param size [int]: size of velocity publisher queue (greater than 0)
+
+        @raise ValueError: if size less than 1.
+        """
+
+        if size < 1:
+            raise ValueError(f"Parameter size must be greater than 0 but got {size}")
+        
+        self._queue_size = size
