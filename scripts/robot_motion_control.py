@@ -38,7 +38,12 @@ class RobotMotionControl(object):
         self.queue_size = queue_size
 
         # Initialize ROS publisher
-        self.velocity_pub = rospy.Publisher(self.velocity_topic, Twist, queue_size=self.queue_size)
+        self.velocity_pub = rospy.Publisher(self.velocity_topic, Twist, queue_size=self._queue_size)
+
+        self.__overwrite = False
+
+        self.pub_lock = threading.Lock()
+        self.overwrite_lock = threading.Lock()
  
 
     
@@ -168,3 +173,37 @@ class RobotMotionControl(object):
             raise ValueError(f"Parameter size must be greater than 0 but got {size}")
         
         self._queue_size = size
+
+    def __publish_velocity(self, msg: Twist, 
+                                 duration: rospy.Duration = None) -> None:
+        """
+        Thread function to publish velocity Twist msg on velocity topic.
+
+        @param msg [Twist]: Twist velocity message
+        @param duration [rospy.Duration]: Duration to publish message.
+        """
+
+        with self.pub_lock:
+            
+            if duration == None:
+                while True:
+
+                    with self.overwrite_lock():
+                        if self.__overwrite:
+                            break
+
+                    self.velocity_pub.publish(msg)
+                    self.rate.sleep()
+            else:
+                start = rospy.Time.now()
+
+                while (rospy.Time.now() - start) < duration:
+                    
+                    with self.overwrite_lock():    
+                        if self.__overwrite:
+                            break
+
+                    self.velocity_pub.publish(msg)
+                    self.rate.sleep()
+
+
