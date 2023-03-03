@@ -3,6 +3,7 @@ from geometry_msgs.msg import Twist
 import rostopic
 
 import threading
+import queue
 
 
 class RobotMotionControl(object):
@@ -31,20 +32,24 @@ class RobotMotionControl(object):
 
         super.__init__(self)
 
-        self.velocity_topic = velocity_topic
-        self.linear_dof = linear_dof
-        self.angualr_dof = angular_dof
-        self.rate = rate
-        self.queue_size = queue_size
 
-        # Initialize ROS publisher
-        self.velocity_pub = rospy.Publisher(self.velocity_topic, Twist, queue_size=self._queue_size)
-
+        self.__pub_lock = threading.Lock()
+        self.__overwrite_lock = threading.Lock()
         self.__overwrite = False
 
-        self.pub_lock = threading.Lock()
-        self.overwrite_lock = threading.Lock()
- 
+        self.__velocity_topic_lock = threading.Lock()
+        self.velocity_topic = velocity_topic
+
+        self.linear_dof = linear_dof
+        self.angualr_dof = angular_dof
+        
+        self.__rate_lock = threading.Lock()
+        self.rate = rate
+        
+        self.__queue_size_lock = threading.Lock()
+        self.queue_size = queue_size
+
+        self.__q = queue()
 
     
     @property
@@ -54,6 +59,9 @@ class RobotMotionControl(object):
 
         @return [str]: string holding topic name.
         """
+
+        while self.__velocity_topic_lock.locked():
+            rospy.spin()
 
         return self._velocity_topic
     
@@ -70,7 +78,11 @@ class RobotMotionControl(object):
         if topic not in rostopic.get_topic_list():
             raise NameError(f"Topic '{topic}' was not found.")
         
-        self._velocity_topic = topic
+        with self.__velocity_topic_lock:
+            self._velocity_topic = topic
+
+        with self.__pub_lock:
+            self.__velocity_pub = rospy.Publisher(self.velocity_topic, Twist, queue_size=self.queue_size)
 
     @property
     def linear_dof(self) -> int:
@@ -130,8 +142,11 @@ class RobotMotionControl(object):
 
         @return [int]: Hz of velocity publisher.
         """
+        
+        while self.__rate_lock.locked():
+            rospy.spin()
 
-        return self._rate.hz
+        return self._rate
     
     @rate.setter
     def rate(self, rate: float) -> None:
@@ -146,9 +161,10 @@ class RobotMotionControl(object):
         if rate <= 0:
             raise ValueError(f"Parameter rate must be positive, but got {rate}")
         
-        self._rate = rospy.Rate(rate)
-
-        
+        with self.__rate_lock:
+            self._rate = rate
+            self.__rate = rospy.Rate(self.rate)
+    
     @property
     def queue_size(self) -> int:
         """
@@ -156,6 +172,9 @@ class RobotMotionControl(object):
 
         @return [int]: velocity publisher queue size.
         """
+
+        while self.__queue_size_lock.locked():
+            rospy.spin()
 
         return self._queue_size
 
@@ -172,7 +191,11 @@ class RobotMotionControl(object):
         if size < 1:
             raise ValueError(f"Parameter size must be greater than 0 but got {size}")
         
-        self._queue_size = size
+        with self.__queue_size_lock:
+            self._queue_size = size
+
+        with self.__pub_lock:
+            self.__velocity_pub = rospy.Publisher(self.velocity_topic, Twist, queue_size=self.queue_size)
 
     def __publish_velocity(self, msg: Twist, 
                                  duration: rospy.Duration = None) -> None:
@@ -183,27 +206,49 @@ class RobotMotionControl(object):
         @param duration [rospy.Duration]: Duration to publish message.
         """
 
-        with self.pub_lock:
+        with self.__pub_lock:
+
+            rate = self.__rate
             
             if duration == None:
                 while True:
 
-                    with self.overwrite_lock():
+                    with self.__overwrite_lock:
                         if self.__overwrite:
                             break
 
-                    self.velocity_pub.publish(msg)
-                    self.rate.sleep()
+                    self.__velocity_pub.publish(msg)
+                    
+                    # If rate is updated while thread is running,
+                    # change may not be seen immediately
+                    if self.__rate_lock.locked():
+                        rate.sleep()
+                    else:
+                        rate = self.__rate()
+
+                    rate.sleep()
             else:
                 start = rospy.Time.now()
 
                 while (rospy.Time.now() - start) < duration:
                     
-                    with self.overwrite_lock():    
+                    with self.__overwrite_lock:    
                         if self.__overwrite:
                             break
 
-                    self.velocity_pub.publish(msg)
-                    self.rate.sleep()
+                    self.__velocity_pub.publish(msg)
+
+                    # If rate is updated while thread is running,
+                    # change may not be seen immediately
+                    self.__rate.sleep()
 
 
+    def velocity_cmd(self, velocity: Twist, 
+                         duration: float = None,
+                         overwrite: bool = False) -> None:
+        """
+        Sends a command to robot to travel at a velocity for a specified duration.
+        If overwrite is False, the command is queue'd behind other assigned velocity
+        commands. If overwrite is True, any currently running velocity command is 
+        canceled, the queue is erased, and the new velocity command is sent to the robot.
+        """
