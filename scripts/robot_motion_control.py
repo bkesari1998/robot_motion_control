@@ -37,7 +37,6 @@ class RobotMotionControl(object):
         self.__overwrite_lock = threading.Lock()
         self.__overwrite = False
 
-        self.__velocity_topic_lock = threading.Lock()
         self.velocity_topic = velocity_topic
 
         self.linear_dof = linear_dof
@@ -46,7 +45,6 @@ class RobotMotionControl(object):
         self.__rate_lock = threading.Lock()
         self.rate = rate
         
-        self.__queue_size_lock = threading.Lock()
         self.queue_size = queue_size
 
         self.__q = queue()
@@ -59,9 +57,6 @@ class RobotMotionControl(object):
 
         @return [str]: string holding topic name.
         """
-
-        while self.__velocity_topic_lock.locked():
-            rospy.spin()
 
         return self._velocity_topic
     
@@ -77,9 +72,11 @@ class RobotMotionControl(object):
 
         if topic not in rostopic.get_topic_list():
             raise NameError(f"Topic '{topic}' was not found.")
-        
-        with self.__velocity_topic_lock:
-            self._velocity_topic = topic
+
+        self._velocity_topic = topic
+
+        with self.__overwrite_lock:
+            self.__overwrite = True
 
         with self.__pub_lock:
             self.__velocity_pub = rospy.Publisher(self.velocity_topic, Twist, queue_size=self.queue_size)
@@ -161,6 +158,9 @@ class RobotMotionControl(object):
         if rate <= 0:
             raise ValueError(f"Parameter rate must be positive, but got {rate}")
         
+        with self.__overwrite_lock:
+            self.__overwrite = True
+
         with self.__rate_lock:
             self._rate = rate
             self.__rate = rospy.Rate(self.rate)
@@ -172,9 +172,6 @@ class RobotMotionControl(object):
 
         @return [int]: velocity publisher queue size.
         """
-
-        while self.__queue_size_lock.locked():
-            rospy.spin()
 
         return self._queue_size
 
@@ -191,8 +188,8 @@ class RobotMotionControl(object):
         if size < 1:
             raise ValueError(f"Parameter size must be greater than 0 but got {size}")
         
-        with self.__queue_size_lock:
-            self._queue_size = size
+        with self.__overwrite_lock:
+            self.__overwrite = True
 
         with self.__pub_lock:
             self.__velocity_pub = rospy.Publisher(self.velocity_topic, Twist, queue_size=self.queue_size)
@@ -200,7 +197,7 @@ class RobotMotionControl(object):
     def __publish_velocity(self, msg: Twist, 
                                  duration: rospy.Duration = None) -> None:
         """
-        Thread function to publish velocity Twist msg on velocity topic.
+        Thread function to publish velocity commands.
 
         @param msg [Twist]: Twist velocity message
         @param duration [rospy.Duration]: Duration to publish message.
@@ -242,6 +239,18 @@ class RobotMotionControl(object):
                     # change may not be seen immediately
                     self.__rate.sleep()
 
+    def __published_queued_velocity(self) -> None:
+        """
+        Thread function to publish queued velocity commands.
+        """
+
+        while True:
+            velocity, duration = self.__q.get()
+
+            self.__publish_velocity(velocity, duration)
+
+            self.__q.task_done()
+
 
     def velocity_cmd(self, velocity: Twist, 
                          duration: float = None,
@@ -252,3 +261,21 @@ class RobotMotionControl(object):
         commands. If overwrite is True, any currently running velocity command is 
         canceled, the queue is erased, and the new velocity command is sent to the robot.
         """
+
+        if overwrite:
+            with self.__overwrite_lock:
+                self.__overwrite = True
+
+            with self.__q.mutex:
+                self.__q.queue.clear()
+            
+            thread = threading.Thread(target=self.__publish_velocity, args=(velocity, duration))
+            thread.start()
+        
+        else:
+            self.__q.put((velocity, duration))
+
+            if self.__q.qsize() == 1:
+                thread = threading.Thread(target=self.__published_queued_velocity)
+                thread.start()
+    
