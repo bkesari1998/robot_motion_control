@@ -30,23 +30,22 @@ class RobotMotionControl(object):
         @param queue_size [int]: Size of velocity publisher queue (greater than 0)
         """
 
-        super.__init__(self)
-
-
         self.__pub_lock = threading.Lock()
         self.__overwrite_lock = threading.Lock()
         self.__overwrite = False
 
+        self.queue_size = queue_size
+
         self.velocity_topic = velocity_topic
+
 
         self.linear_dof = linear_dof
         self.angualr_dof = angular_dof
         
         self.__rate_lock = threading.Lock()
         self.rate = rate
-        
-        self.queue_size = queue_size
 
+        
         self.__q = queue()
 
     
@@ -69,9 +68,6 @@ class RobotMotionControl(object):
 
         @raise NameError: if topic is not found.
         """
-
-        if topic not in rostopic.get_topic_list():
-            raise NameError(f"Topic '{topic}' was not found.")
 
         self._velocity_topic = topic
 
@@ -139,7 +135,7 @@ class RobotMotionControl(object):
 
         @return [int]: Hz of velocity publisher.
         """
-        
+
         while self.__rate_lock.locked():
             rospy.spin()
 
@@ -155,6 +151,7 @@ class RobotMotionControl(object):
         @raise ValueError: if rate is less than or equal to 0
         """
 
+        print("In rate setter")
         if rate <= 0:
             raise ValueError(f"Parameter rate must be positive, but got {rate}")
         
@@ -163,7 +160,8 @@ class RobotMotionControl(object):
 
         with self.__rate_lock:
             self._rate = rate
-            self.__rate = rospy.Rate(self.rate)
+            self.__rate = rospy.Rate(self._rate)
+
     
     @property
     def queue_size(self) -> int:
@@ -188,11 +186,13 @@ class RobotMotionControl(object):
         if size < 1:
             raise ValueError(f"Parameter size must be greater than 0 but got {size}")
         
-        with self.__overwrite_lock:
-            self.__overwrite = True
+        self._queue_size = size
+        
+        # with self.__overwrite_lock:
+        #     self.__overwrite = True
 
-        with self.__pub_lock:
-            self.__velocity_pub = rospy.Publisher(self.velocity_topic, Twist, queue_size=self.queue_size)
+        # with self.__pub_lock:
+        #     self.__velocity_pub = rospy.Publisher(self.velocity_topic, Twist, queue_size=self.queue_size)
 
     def __publish_velocity(self, msg: Twist, 
                                  duration: rospy.Duration = None) -> None:
@@ -262,12 +262,17 @@ class RobotMotionControl(object):
         canceled, the queue is erased, and the new velocity command is sent to the robot.
         """
 
+        print("Got cmd")
+
+
         if overwrite:
             with self.__overwrite_lock:
                 self.__overwrite = True
 
             with self.__q.mutex:
                 self.__q.queue.clear()
+
+            print("starting_thread") 
             
             thread = threading.Thread(target=self.__publish_velocity, args=(velocity, duration))
             thread.start()
@@ -278,4 +283,6 @@ class RobotMotionControl(object):
             if self.__q.qsize() == 1:
                 thread = threading.Thread(target=self.__published_queued_velocity)
                 thread.start()
+
+            self.__q.join()
     
