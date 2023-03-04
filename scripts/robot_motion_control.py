@@ -5,6 +5,8 @@ import rostopic
 import threading
 import queue
 
+import time
+
 
 class RobotMotionControl(object):
     """
@@ -222,27 +224,23 @@ class RobotMotionControl(object):
 
                     rate.sleep()
             else:
+                
+                end = time.time() + 5
 
-                print("In else condition")
-                duration = rospy.Duration(duration)
-                start = rospy.Time.now()
+                while time.time() < end:
 
-                for i in range(50):
-
-                    
-                    print(self.__overwrite_lock.locked())
                     if self.__overwrite_lock.locked():
                         break
 
-                    print("publishing")
                     self.__velocity_pub.publish(msg)
-
-                    # If rate is updated while thread is running,
-                    # change may not be seen immediately
                     self.__rate.sleep()
-                    print("sleeping")
+
+                print(self.__q.qsize())
+                if self.__q.qsize() == 0:
+                    print("publishing stop")
+                    self.__velocity_pub.publish(Twist())
+                    self.__rate.sleep()
                 
-                print("out of while")
 
     def __published_queued_velocity(self) -> None:
         """
@@ -256,8 +254,6 @@ class RobotMotionControl(object):
 
             self.__q.task_done()
 
-            print(self.__q.empty())
-
 
     def velocity_cmd(self, velocity: Twist, 
                          duration: float = None,
@@ -269,16 +265,12 @@ class RobotMotionControl(object):
         canceled, the queue is erased, and the new velocity command is sent to the robot.
         """
 
-        print("Got cmd")
-
-
         if overwrite:
             with self.__overwrite_lock:
 
                 with self.__q.mutex:
                     self.__q.queue.clear()
 
-            print("starting_thread") 
             
             thread = threading.Thread(target=self.__publish_velocity, args=(velocity, duration), daemon=True)
             thread.start()
@@ -287,7 +279,6 @@ class RobotMotionControl(object):
             self.__q.put((velocity, duration))
 
             if self.__q.qsize() == 1:
-                print("starting thread")
                 thread = threading.Thread(target=self.__published_queued_velocity, daemon=True)
                 thread.start()
     
