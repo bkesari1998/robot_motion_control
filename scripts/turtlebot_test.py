@@ -12,7 +12,7 @@ class Turtlebot(object):
 
         rospy.init_node('turtlebot_test', anonymous=True)
 
-        self.motion_control = RobotMotionControl('/cmd_vel_mux/input/navi', 1, 1, 3, 1)
+        self.motion_control = RobotMotionControl('/cmd_vel', 1, 1, 3, 1)
 
         self.motion_control.velocity_cmd(Twist(linear=Vector3(x=0.1, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0)), duration=5)
 
