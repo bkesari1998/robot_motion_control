@@ -3,3 +3,4 @@ scripts/__pycache__/threading.cpython-38.pyc
 .vscode/settings.json
 scripts/.vscode/settings.json
 scripts/.vscode/c_cpp_properties.json
+scripts/__pycache__/robot_motion_control.cpython-38.pyc
