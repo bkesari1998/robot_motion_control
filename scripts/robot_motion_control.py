@@ -46,7 +46,7 @@ class RobotMotionControl(object):
         self.rate = rate
 
         
-        self.__q = queue()
+        self.__q = queue.Queue()
 
     
     @property
@@ -72,10 +72,8 @@ class RobotMotionControl(object):
         self._velocity_topic = topic
 
         with self.__overwrite_lock:
-            self.__overwrite = True
-
-        with self.__pub_lock:
-            self.__velocity_pub = rospy.Publisher(self.velocity_topic, Twist, queue_size=self.queue_size)
+            with self.__pub_lock:
+                self.__velocity_pub = rospy.Publisher(self.velocity_topic, Twist, queue_size=self.queue_size)
 
     @property
     def linear_dof(self) -> int:
@@ -156,11 +154,10 @@ class RobotMotionControl(object):
             raise ValueError(f"Parameter rate must be positive, but got {rate}")
         
         with self.__overwrite_lock:
-            self.__overwrite = True
 
-        with self.__rate_lock:
-            self._rate = rate
-            self.__rate = rospy.Rate(self._rate)
+            with self.__rate_lock:
+                self._rate = rate
+                self.__rate = rospy.Rate(self._rate)
 
     
     @property
@@ -210,9 +207,9 @@ class RobotMotionControl(object):
             if duration == None:
                 while True:
 
-                    with self.__overwrite_lock:
-                        if self.__overwrite:
-                            break
+                    if self.__overwrite_lock.locked():
+                        break
+                
 
                     self.__velocity_pub.publish(msg)
                     
@@ -225,19 +222,27 @@ class RobotMotionControl(object):
 
                     rate.sleep()
             else:
+
+                print("In else condition")
+                duration = rospy.Duration(duration)
                 start = rospy.Time.now()
 
-                while (rospy.Time.now() - start) < duration:
-                    
-                    with self.__overwrite_lock:    
-                        if self.__overwrite:
-                            break
+                for i in range(50):
 
+                    
+                    print(self.__overwrite_lock.locked())
+                    if self.__overwrite_lock.locked():
+                        break
+
+                    print("publishing")
                     self.__velocity_pub.publish(msg)
 
                     # If rate is updated while thread is running,
                     # change may not be seen immediately
                     self.__rate.sleep()
+                    print("sleeping")
+                
+                print("out of while")
 
     def __published_queued_velocity(self) -> None:
         """
@@ -250,6 +255,8 @@ class RobotMotionControl(object):
             self.__publish_velocity(velocity, duration)
 
             self.__q.task_done()
+
+            print(self.__q.empty())
 
 
     def velocity_cmd(self, velocity: Twist, 
@@ -267,22 +274,20 @@ class RobotMotionControl(object):
 
         if overwrite:
             with self.__overwrite_lock:
-                self.__overwrite = True
 
-            with self.__q.mutex:
-                self.__q.queue.clear()
+                with self.__q.mutex:
+                    self.__q.queue.clear()
 
             print("starting_thread") 
             
-            thread = threading.Thread(target=self.__publish_velocity, args=(velocity, duration))
+            thread = threading.Thread(target=self.__publish_velocity, args=(velocity, duration), daemon=True)
             thread.start()
         
         else:
             self.__q.put((velocity, duration))
 
             if self.__q.qsize() == 1:
-                thread = threading.Thread(target=self.__published_queued_velocity)
+                print("starting thread")
+                thread = threading.Thread(target=self.__published_queued_velocity, daemon=True)
                 thread.start()
-
-            self.__q.join()
     
